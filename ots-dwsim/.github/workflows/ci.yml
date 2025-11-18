@@ -43,13 +43,37 @@ jobs:
     - name: Build Control Gateway
       run: dotnet build ots-dwsim/src/control-gateway/DWSIM.OTS.ControlGateway.csproj --configuration Release --no-restore
 
+    - name: Restore test dependencies
+      run: |
+        dotnet restore ots-dwsim/tests/DWSIM.OTS.SimulationHost.Tests/DWSIM.OTS.SimulationHost.Tests.csproj
+        dotnet restore ots-dwsim/tests/DWSIM.OTS.ControlGateway.Tests/DWSIM.OTS.ControlGateway.Tests.csproj
+
+    - name: Build tests
+      run: |
+        dotnet build ots-dwsim/tests/DWSIM.OTS.SimulationHost.Tests/DWSIM.OTS.SimulationHost.Tests.csproj --configuration Release --no-restore
+        dotnet build ots-dwsim/tests/DWSIM.OTS.ControlGateway.Tests/DWSIM.OTS.ControlGateway.Tests.csproj --configuration Release --no-restore
+
     - name: Run backend tests
       run: |
-        if [ -d "ots-dwsim/tests" ]; then
-          dotnet test ots-dwsim/tests --configuration Release --no-build --verbosity normal
-        else
-          echo "No tests found yet"
-        fi
+        dotnet test ots-dwsim/tests/DWSIM.OTS.SimulationHost.Tests/DWSIM.OTS.SimulationHost.Tests.csproj \
+          --configuration Release \
+          --no-build \
+          --verbosity normal \
+          --logger "trx;LogFileName=test-results-host.trx"
+
+        dotnet test ots-dwsim/tests/DWSIM.OTS.ControlGateway.Tests/DWSIM.OTS.ControlGateway.Tests.csproj \
+          --configuration Release \
+          --no-build \
+          --verbosity normal \
+          --logger "trx;LogFileName=test-results-gateway.trx"
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: |
+          ots-dwsim/tests/**/TestResults/*.trx
 
   validate-scenarios:
     name: Validate Scenario Files
@@ -143,6 +167,86 @@ jobs:
     - name: Run security scan
       run: |
         echo "Security scanning placeholder - implement with tools like SAST"
+
+  code-coverage:
+    name: Code Coverage Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore DWSIM dependencies
+      run: dotnet restore DWSIM.sln
+      working-directory: .
+
+    - name: Build DWSIM
+      run: dotnet build DWSIM.sln --configuration Release --no-restore
+      working-directory: .
+
+    - name: Restore OTS dependencies
+      run: |
+        dotnet restore ots-dwsim/src/dwsim-host/DWSIM.OTS.SimulationHost.csproj
+        dotnet restore ots-dwsim/src/control-gateway/DWSIM.OTS.ControlGateway.csproj
+
+    - name: Build OTS projects
+      run: |
+        dotnet build ots-dwsim/src/dwsim-host/DWSIM.OTS.SimulationHost.csproj --configuration Release --no-restore
+        dotnet build ots-dwsim/src/control-gateway/DWSIM.OTS.ControlGateway.csproj --configuration Release --no-restore
+
+    - name: Run tests with coverage
+      run: |
+        dotnet test ots-dwsim/tests/DWSIM.OTS.SimulationHost.Tests/DWSIM.OTS.SimulationHost.Tests.csproj \
+          --configuration Release \
+          --collect:"XPlat Code Coverage" \
+          --results-directory ./coverage \
+          --verbosity normal
+
+        dotnet test ots-dwsim/tests/DWSIM.OTS.ControlGateway.Tests/DWSIM.OTS.ControlGateway.Tests.csproj \
+          --configuration Release \
+          --collect:"XPlat Code Coverage" \
+          --results-directory ./coverage \
+          --verbosity normal
+
+    - name: Install ReportGenerator
+      run: dotnet tool install -g dotnet-reportgenerator-globaltool
+
+    - name: Generate coverage report
+      run: |
+        reportgenerator \
+          -reports:"./coverage/**/coverage.cobertura.xml" \
+          -targetdir:"./coverage/report" \
+          -reporttypes:"Html;MarkdownSummaryGithub;Cobertura"
+
+    - name: Display coverage summary
+      run: cat ./coverage/report/SummaryGithub.md >> $GITHUB_STEP_SUMMARY
+
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: code-coverage-report
+        path: ./coverage/report
+
+    - name: Check coverage threshold
+      run: |
+        # Parse coverage percentage from Cobertura XML
+        COVERAGE=$(grep -oP 'line-rate="\K[0-9.]+' ./coverage/report/Cobertura.xml | head -1)
+        COVERAGE_PERCENT=$(echo "$COVERAGE * 100" | bc)
+        echo "Current coverage: ${COVERAGE_PERCENT}%"
+
+        # Set threshold (currently 50%, can be adjusted)
+        THRESHOLD=50
+
+        if (( $(echo "$COVERAGE_PERCENT < $THRESHOLD" | bc -l) )); then
+          echo "::warning::Code coverage ${COVERAGE_PERCENT}% is below threshold of ${THRESHOLD}%"
+        else
+          echo "::notice::Code coverage ${COVERAGE_PERCENT}% meets or exceeds threshold of ${THRESHOLD}%"
+        fi
 
   integration-tests:
     name: Integration Tests
