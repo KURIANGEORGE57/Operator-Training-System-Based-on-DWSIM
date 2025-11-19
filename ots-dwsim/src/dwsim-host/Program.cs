@@ -37,6 +37,7 @@ builder.Services.AddSwaggerGen(c =>
 // Register application services
 builder.Services.AddSingleton<ISessionManager, SessionManager>();
 builder.Services.AddSingleton<IFlowsheetRepository, FlowsheetRepository>();
+builder.Services.AddSingleton<IScenarioExecutor, ScenarioExecutor>();
 
 // CORS for development
 builder.Services.AddCors(options =>

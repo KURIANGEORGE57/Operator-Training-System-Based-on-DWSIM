@@ -211,27 +211,62 @@ public class SessionManager : ISessionManager
             throw new KeyNotFoundException($"Session not found: {sessionId}");
         }
 
+        if (session.Flowsheet == null || session.AutomationInterface == null)
+        {
+            throw new InvalidOperationException("Flowsheet not loaded");
+        }
+
         var snapshotId = $"snap-{Guid.NewGuid().ToString()[..8]}";
         var savedAt = DateTime.UtcNow;
 
-        // TODO: Implement actual snapshot serialization
-        // For now, just log the snapshot request
-        _logger.LogInformation("Created snapshot {SnapshotId} for session {SessionId} with name {Name}",
-            snapshotId, sessionId, request.Name);
-
-        session.EventLog.Add(new EventLogEntry
+        try
         {
-            Type = "snapshot_created",
-            Target = request.Name,
-            SimTime = session.SimTime,
-            RealTime = DateTime.UtcNow
-        });
+            // Serialize the flowsheet to XML
+            var flowsheetXml = session.Flowsheet.SaveToXML();
 
-        return Task.FromResult(new SnapshotResponse
+            // Create snapshot data structure
+            var snapshot = new Snapshot
+            {
+                SnapshotId = snapshotId,
+                Name = request.Name,
+                SessionId = sessionId,
+                CreatedAt = savedAt,
+                SimTime = session.SimTime,
+                TimeFactor = session.TimeFactor,
+                FlowsheetXml = flowsheetXml.ToString(),
+                Environment = new Dictionary<string, object>(session.Environment)
+            };
+
+            // Store snapshot in session
+            if (session.Snapshots == null)
+            {
+                session.Snapshots = new Dictionary<string, Snapshot>();
+            }
+            session.Snapshots[snapshotId] = snapshot;
+
+            _logger.LogInformation("Created snapshot {SnapshotId} for session {SessionId} with name {Name}",
+                snapshotId, sessionId, request.Name);
+
+            session.EventLog.Add(new EventLogEntry
+            {
+                Type = "snapshot_created",
+                Target = request.Name,
+                Value = snapshotId,
+                SimTime = session.SimTime,
+                RealTime = DateTime.UtcNow
+            });
+
+            return Task.FromResult(new SnapshotResponse
+            {
+                SnapshotId = snapshotId,
+                SavedAt = savedAt
+            });
+        }
+        catch (Exception ex)
         {
-            SnapshotId = snapshotId,
-            SavedAt = savedAt
-        });
+            _logger.LogError(ex, "Error creating snapshot for session {SessionId}", sessionId);
+            throw;
+        }
     }
 
     public Task<SessionInfo> RestoreSnapshotAsync(string sessionId, RestoreSnapshotRequest request)
@@ -241,19 +276,51 @@ public class SessionManager : ISessionManager
             throw new KeyNotFoundException($"Session not found: {sessionId}");
         }
 
-        // TODO: Implement actual snapshot restoration
-        _logger.LogInformation("Restoring snapshot {SnapshotId} for session {SessionId}",
-            request.SnapshotId, sessionId);
-
-        session.EventLog.Add(new EventLogEntry
+        if (session.Snapshots == null || !session.Snapshots.ContainsKey(request.SnapshotId))
         {
-            Type = "snapshot_restored",
-            Target = request.SnapshotId,
-            SimTime = session.SimTime,
-            RealTime = DateTime.UtcNow
-        });
+            throw new KeyNotFoundException($"Snapshot {request.SnapshotId} not found for session {sessionId}");
+        }
 
-        return Task.FromResult(session.ToSessionInfo());
+        try
+        {
+            var snapshot = session.Snapshots[request.SnapshotId];
+
+            _logger.LogInformation("Restoring snapshot {SnapshotId} for session {SessionId}",
+                request.SnapshotId, sessionId);
+
+            // Parse the XML and load into the flowsheet
+            var xdoc = System.Xml.Linq.XDocument.Parse(snapshot.FlowsheetXml);
+
+            // Load the flowsheet state from XML
+            if (session.Flowsheet != null)
+            {
+                session.Flowsheet.LoadFromXML(xdoc);
+            }
+
+            // Restore session state
+            session.SimTime = snapshot.SimTime;
+            session.TimeFactor = snapshot.TimeFactor;
+            session.Environment = new Dictionary<string, object>(snapshot.Environment);
+
+            _logger.LogInformation("Successfully restored snapshot {SnapshotId}", request.SnapshotId);
+
+            session.EventLog.Add(new EventLogEntry
+            {
+                Type = "snapshot_restored",
+                Target = request.SnapshotId,
+                Value = snapshot.Name,
+                SimTime = session.SimTime,
+                RealTime = DateTime.UtcNow
+            });
+
+            return Task.FromResult(session.ToSessionInfo());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error restoring snapshot {SnapshotId} for session {SessionId}",
+                request.SnapshotId, sessionId);
+            throw;
+        }
     }
 
     public async Task<StartSessionResponse> StepSessionAsync(string sessionId, TimeStepRequest request)
@@ -331,26 +398,45 @@ public class SessionManager : ISessionManager
 
         try
         {
-            // Parse tag path: Streams.Feed.Temperature
+            // Parse tag path: Streams.Feed.Temperature or Units.Reactor1.Temperature
             var parts = tagPath.Split('.');
 
-            object? value = null;
-            string? units = null;
-
-            if (parts.Length >= 3)
+            if (parts.Length < 3)
             {
-                var category = parts[0]; // Streams, Units, Controllers
-                var objectName = parts[1];
-                var propertyName = parts[2];
-
-                // TODO: Implement proper tag reading from DWSIM flowsheet
-                // This is a placeholder implementation
-                _logger.LogDebug("Reading tag {TagPath} from session {SessionId}", tagPath, sessionId);
-
-                // For now, return a mock value
-                value = 298.15; // Mock temperature in K
-                units = "K";
+                throw new ArgumentException($"Invalid tag path format. Expected: Category.ObjectName.PropertyName, got: {tagPath}");
             }
+
+            var category = parts[0]; // Streams, Units, Controllers, etc.
+            var objectName = parts[1];
+            var propertyName = parts[2];
+
+            _logger.LogDebug("Reading tag {TagPath} from session {SessionId}", tagPath, sessionId);
+
+            // Find the simulation object by name
+            ISimulationObject? simObject = null;
+
+            // Try to find object in SimulationObjects dictionary
+            foreach (var kvp in session.Flowsheet.SimulationObjects)
+            {
+                if (kvp.Value.Name == objectName)
+                {
+                    simObject = kvp.Value;
+                    break;
+                }
+            }
+
+            if (simObject == null)
+            {
+                _logger.LogWarning("Object {ObjectName} not found in flowsheet", objectName);
+                return Task.FromResult<TagValue?>(null);
+            }
+
+            // Map common property names to DWSIM property codes
+            string propertyCode = MapPropertyNameToCode(propertyName);
+
+            // Read the property value using DWSIM API
+            object? value = simObject.GetPropertyValue(propertyCode, session.Flowsheet.FlowsheetOptions.SelectedUnitSystem);
+            string? units = simObject.GetPropertyUnit(propertyCode, session.Flowsheet.FlowsheetOptions.SelectedUnitSystem);
 
             return Task.FromResult<TagValue?>(new TagValue
             {
@@ -381,31 +467,60 @@ public class SessionManager : ISessionManager
 
         try
         {
-            // Parse tag path
+            // Parse tag path: Streams.Feed.Temperature or Units.Reactor1.Temperature
             var parts = tagPath.Split('.');
 
-            if (parts.Length >= 3)
+            if (parts.Length < 3)
             {
-                var category = parts[0];
-                var objectName = parts[1];
-                var propertyName = parts[2];
-
-                // TODO: Implement proper tag writing to DWSIM flowsheet
-                _logger.LogInformation("Writing tag {TagPath} = {Value} in session {SessionId} by user {User}",
-                    tagPath, request.Value, sessionId, request.User);
-
-                // Log the write event
-                session.EventLog.Add(new EventLogEntry
-                {
-                    Type = "operator_action",
-                    User = request.User,
-                    Action = "write",
-                    Target = tagPath,
-                    Value = request.Value,
-                    SimTime = session.SimTime,
-                    RealTime = DateTime.UtcNow
-                });
+                throw new ArgumentException($"Invalid tag path format. Expected: Category.ObjectName.PropertyName, got: {tagPath}");
             }
+
+            var category = parts[0];
+            var objectName = parts[1];
+            var propertyName = parts[2];
+
+            _logger.LogInformation("Writing tag {TagPath} = {Value} in session {SessionId} by user {User}",
+                tagPath, request.Value, sessionId, request.User);
+
+            // Find the simulation object by name
+            ISimulationObject? simObject = null;
+
+            foreach (var kvp in session.Flowsheet.SimulationObjects)
+            {
+                if (kvp.Value.Name == objectName)
+                {
+                    simObject = kvp.Value;
+                    break;
+                }
+            }
+
+            if (simObject == null)
+            {
+                throw new ArgumentException($"Object {objectName} not found in flowsheet");
+            }
+
+            // Map common property names to DWSIM property codes
+            string propertyCode = MapPropertyNameToCode(propertyName);
+
+            // Write the property value using DWSIM API
+            bool success = simObject.SetPropertyValue(propertyCode, request.Value, session.Flowsheet.FlowsheetOptions.SelectedUnitSystem);
+
+            if (!success)
+            {
+                throw new InvalidOperationException($"Failed to set property {propertyName} on {objectName}");
+            }
+
+            // Log the write event
+            session.EventLog.Add(new EventLogEntry
+            {
+                Type = "operator_action",
+                User = request.User,
+                Action = "write",
+                Target = tagPath,
+                Value = request.Value,
+                SimTime = session.SimTime,
+                RealTime = DateTime.UtcNow
+            });
 
             return Task.FromResult(new WriteTagResponse
             {
@@ -441,6 +556,52 @@ public class SessionManager : ISessionManager
 
         return Task.FromResult(events.ToList());
     }
+
+    /// <summary>
+    /// Maps common property names to DWSIM property codes.
+    /// See: https://dwsim.org/wiki/index.php?title=Object_Property_Codes
+    /// </summary>
+    private string MapPropertyNameToCode(string propertyName)
+    {
+        return propertyName.ToLower() switch
+        {
+            // Material Stream properties
+            "temperature" => "PROP_MS_0",       // Temperature
+            "pressure" => "PROP_MS_1",          // Pressure
+            "massflow" => "PROP_MS_2",          // Mass Flow
+            "molarflow" => "PROP_MS_3",         // Molar Flow
+            "volumeflow" => "PROP_MS_4",        // Volumetric Flow
+            "enthalpy" => "PROP_MS_5",          // Molar Enthalpy
+            "entropy" => "PROP_MS_6",           // Molar Entropy
+            "density" => "PROP_MS_7",           // Density
+            "molecularweight" => "PROP_MS_8",   // Molecular Weight
+            "specificheat" => "PROP_MS_9",      // Specific Heat (Cp)
+
+            // Energy Stream properties
+            "energyflow" => "PROP_ES_0",        // Energy Flow
+
+            // Unit Operation common properties
+            "deltap" => "PROP_UO_0",            // Pressure Drop
+            "heatload" => "PROP_UO_1",          // Heat Load/Duty
+            "efficiency" => "PROP_UO_2",        // Efficiency
+            "power" => "PROP_UO_3",             // Power
+
+            // Pump/Compressor
+            "dischargepressure" => "PROP_PP_0", // Discharge Pressure (Pump)
+            "deltapress" => "PROP_PP_1",        // Delta P (Pump)
+
+            // Controller properties
+            "pv" => "PROP_CO_0",                // Process Variable
+            "sp" => "PROP_CO_1",                // Setpoint
+            "mv" => "PROP_CO_2",                // Manipulated Variable
+            "kp" => "PROP_CO_3",                // Proportional Gain
+            "ki" => "PROP_CO_4",                // Integral Time
+            "kd" => "PROP_CO_5",                // Derivative Time
+
+            // Default - return as-is if not mapped
+            _ => propertyName
+        };
+    }
 }
 
 // Internal session state class
@@ -464,6 +625,9 @@ internal class SimulationSession
     public DWSIM.Automation.Automation2? AutomationInterface { get; set; }
     public IFlowsheet? Flowsheet { get; set; }
 
+    // Snapshots
+    public Dictionary<string, Snapshot>? Snapshots { get; set; }
+
     public SessionInfo ToSessionInfo()
     {
         return new SessionInfo
@@ -479,4 +643,17 @@ internal class SimulationSession
             FlowsheetPath = FlowsheetPath
         };
     }
+}
+
+// Snapshot data class
+internal class Snapshot
+{
+    public required string SnapshotId { get; set; }
+    public required string Name { get; set; }
+    public required string SessionId { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime SimTime { get; set; }
+    public double TimeFactor { get; set; }
+    public required string FlowsheetXml { get; set; }
+    public Dictionary<string, object> Environment { get; set; } = new();
 }
