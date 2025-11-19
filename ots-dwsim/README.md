@@ -72,11 +72,15 @@ npm run dev
 # Build and start all services
 docker-compose up --build
 
-# Access UIs
-# Operator HMI: http://localhost:3000
-# Instructor UI: http://localhost:3001
-# API Docs: http://localhost:5000/swagger
+# Access services
+# Orchestrator API: http://localhost:5001/swagger
+# Orchestrator Health: http://localhost:5001/health
+# DWSIM Host API: http://localhost:5000/swagger
+# Operator HMI: http://localhost:3000 (not yet implemented)
+# Instructor UI: http://localhost:3001 (not yet implemented)
 ```
+
+**Note**: Currently implemented services are Orchestrator, DWSIM Host, Control Gateway, and TimescaleDB. UI components are planned for future phases.
 
 ## Components
 
@@ -84,7 +88,12 @@ docker-compose up --build
 .NET 8 service embedding DWSIM assemblies. Provides REST API for flowsheet loading, session lifecycle, variable read/write, and time control.
 
 ### `/src/orchestrator`
-Session manager coordinating multiple simulation instances, scenario execution, and logging.
+✅ **IMPLEMENTED** - Session pool manager coordinating multiple DWSIM host instances. Features:
+- Multi-host session management with load balancing
+- Automatic health monitoring and failover
+- TimescaleDB integration for event logging
+- REST API for session lifecycle control
+- Real-time session statistics and monitoring
 
 ### `/src/control-gateway`
 OPC UA server exposing simulation variables following ISA-95 naming conventions.
@@ -102,9 +111,26 @@ Event replay engine for deterministic session playback and analysis.
 
 Full OpenAPI specification: [docs/api/openapi.yaml](docs/api/openapi.yaml)
 
-Base URL: `http://localhost:5000/api/v1`
+### Orchestrator API
+Base URL: `http://localhost:5001/api/v1`
 
 Key endpoints:
+- `GET /api/v1/health` - Orchestrator health and statistics
+- `POST /api/v1/sessions` - Create new simulation session (auto-assigned to available host)
+- `GET /api/v1/sessions` - List all sessions
+- `GET /api/v1/sessions/{id}` - Get session details
+- `POST /api/v1/sessions/{id}/start` - Start simulation
+- `POST /api/v1/sessions/{id}/pause` - Pause simulation
+- `POST /api/v1/sessions/{id}/stop` - Stop simulation
+- `GET /api/v1/sessions/{id}/tags/{path}` - Read tag value
+- `POST /api/v1/sessions/{id}/tags/{path}` - Write tag value
+- `GET /api/v1/sessions/{id}/events` - Get session event log
+- `GET /api/v1/statistics` - Pool statistics
+
+### DWSIM Host API
+Base URL: `http://localhost:5000/api/v1`
+
+Direct host endpoints (typically accessed via Orchestrator):
 - `POST /api/v1/sessions` - Create new simulation session
 - `POST /api/v1/sessions/{id}/start` - Start simulation
 - `GET /api/v1/sessions/{id}/tags/{path}` - Read tag value

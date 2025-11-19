@@ -25,18 +25,45 @@ services:
     image: timescale/timescaledb:latest-pg15
     container_name: ots-timescaledb
     environment:
-      POSTGRES_DB: ots_timeseries
-      POSTGRES_USER: ots_user
-      POSTGRES_PASSWORD: ots_password
+      POSTGRES_DB: dwsim_ots
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     ports:
       - "5433:5432"
     volumes:
       - timescale_data:/var/lib/postgresql/data
+      - ./src/infra/db/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ots_user"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Orchestrator Service
+  orchestrator:
+    build:
+      context: .
+      dockerfile: src/orchestrator/Dockerfile
+    container_name: ots-orchestrator
+    ports:
+      - "5001:5001"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5001
+      - ConnectionStrings__TimescaleDb=Host=timescaledb;Port=5432;Database=dwsim_ots;Username=postgres;Password=postgres
+      - Pool__HostUrls__0=http://dwsim-host:5000
+    volumes:
+      - ./logs/orchestrator:/app/logs
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      dwsim-host:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # DWSIM Simulation Host
   dwsim-host:

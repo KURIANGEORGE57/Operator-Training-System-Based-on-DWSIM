@@ -11,14 +11,15 @@ ots-dwsim/
 ├── src/
 │   ├── dwsim-host/           # ✅ COMPLETED - REST API simulation host
 │   ├── control-gateway/      # ✅ COMPLETED - OPC UA server skeleton
-│   ├── orchestrator/         # ⏳ TODO - Session orchestration
+│   ├── orchestrator/         # ✅ COMPLETED - Session orchestration & pool management
 │   ├── hmi-operator/         # ⏳ TODO - React operator HMI
 │   ├── hmi-instructor/       # ⏳ TODO - React instructor UI
 │   ├── replay/               # ⏳ TODO - Replay engine
 │   ├── docs/
 │   │   ├── api/              # ✅ COMPLETED - OpenAPI spec
 │   │   └── schemas/          # ✅ COMPLETED - Scenario JSON schema
-│   └── infra/                # ⏳ TODO - K8s/Helm charts
+│   └── infra/
+│       └── db/               # ✅ COMPLETED - TimescaleDB schema
 ├── samples/
 │   ├── flowsheets/           # ⏳ TODO - Sample DWSIM flowsheets
 │   └── scenarios/            # ✅ COMPLETED - Sample scenario JSON
