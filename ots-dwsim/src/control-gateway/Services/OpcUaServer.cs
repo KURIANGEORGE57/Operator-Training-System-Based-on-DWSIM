@@ -81,8 +81,19 @@ public class OpcUaServer : IOpcUaServer
         {
             if (_nodes.TryGetValue(tagPath, out var node))
             {
-                // TODO: Update the node value in the OPC UA address space
-                _logger.LogDebug("Updated tag {TagPath} = {Value}", tagPath, value);
+                // Update the node value in the OPC UA address space
+                if (node is BaseDataVariableState variableNode)
+                {
+                    variableNode.Value = value;
+                    variableNode.Timestamp = DateTime.UtcNow;
+                    variableNode.ClearChangeMasks(null, false);
+
+                    _logger.LogDebug("Updated tag {TagPath} = {Value}", tagPath, value);
+                }
+                else
+                {
+                    _logger.LogWarning("Node {TagPath} is not a variable node", tagPath);
+                }
             }
             else
             {
@@ -104,9 +115,17 @@ public class OpcUaServer : IOpcUaServer
         {
             if (_nodes.TryGetValue(tagPath, out var node))
             {
-                // TODO: Read the actual node value
-                _logger.LogDebug("Read tag {TagPath}", tagPath);
-                return Task.FromResult<object?>(null);
+                // Read the actual node value
+                if (node is BaseDataVariableState variableNode)
+                {
+                    _logger.LogDebug("Read tag {TagPath} = {Value}", tagPath, variableNode.Value);
+                    return Task.FromResult(variableNode.Value);
+                }
+                else
+                {
+                    _logger.LogWarning("Node {TagPath} is not a variable node", tagPath);
+                    return Task.FromResult<object?>(null);
+                }
             }
             else
             {
@@ -150,12 +169,16 @@ public class OpcUaServer : IOpcUaServer
         {
             _logger.LogDebug("Creating folder: {FolderName} with NodeId {NodeId}", folder.Name, folder.NodeId);
 
-            // TODO: Create actual OPC UA folder node
-            // For now, just track in dictionary
-            var nodeState = new BaseObjectState(null)
+            // Create OPC UA folder node
+            var nodeState = new FolderState(null)
             {
-                // NodeId = NodeId.Parse(folder.NodeId),
-                // BrowseName = new QualifiedName(folder.Name)
+                NodeId = NodeId.Parse(folder.NodeId),
+                BrowseName = new QualifiedName(folder.Name, _mapping?.Namespace.Index ?? 2),
+                DisplayName = new LocalizedText(folder.Name),
+                Description = new LocalizedText($"Folder: {folder.Name}"),
+                WriteMask = AttributeWriteMask.None,
+                UserWriteMask = AttributeWriteMask.None,
+                EventNotifier = EventNotifiers.None
             };
 
             _nodes.TryAdd(folder.Name, nodeState);
@@ -181,15 +204,41 @@ public class OpcUaServer : IOpcUaServer
         {
             _logger.LogDebug("Creating tag node: {TagPath} -> {NodeId}", mapping.DwsimTag, mapping.OpcuaNodeId);
 
-            // TODO: Create actual OPC UA variable node with proper data type
+            // Create OPC UA variable node with proper data type
             var nodeState = new BaseDataVariableState(null)
             {
-                // NodeId = NodeId.Parse(mapping.OpcuaNodeId),
-                // BrowseName = new QualifiedName(mapping.BrowseName),
-                // DisplayName = new LocalizedText(mapping.DisplayName),
-                // DataType = GetOpcDataType(mapping.DataType),
-                // AccessLevel = mapping.Writable ? AccessLevels.CurrentReadOrWrite : AccessLevels.CurrentRead
+                NodeId = NodeId.Parse(mapping.OpcuaNodeId),
+                BrowseName = new QualifiedName(mapping.BrowseName, _mapping?.Namespace.Index ?? 2),
+                DisplayName = new LocalizedText(mapping.DisplayName),
+                Description = mapping.Description != null ? new LocalizedText(mapping.Description) : null,
+                DataType = GetOpcDataType(mapping.DataType),
+                ValueRank = ValueRanks.Scalar,
+                AccessLevel = mapping.Writable ? AccessLevels.CurrentReadOrWrite : AccessLevels.CurrentRead,
+                UserAccessLevel = mapping.Writable ? AccessLevels.CurrentReadOrWrite : AccessLevels.CurrentRead,
+                MinimumSamplingInterval = 100,
+                Historizing = false,
+                Value = GetDefaultValue(mapping.DataType),
+                Timestamp = DateTime.UtcNow,
+                StatusCode = StatusCodes.Good
             };
+
+            // Set engineering units if specified
+            if (mapping.Units != null)
+            {
+                nodeState.EngineeringUnits = new PropertyState<EUInformation>(nodeState)
+                {
+                    Value = new EUInformation(mapping.Units, mapping.Units, "http://www.opcfoundation.org/UA/units/un/cefact")
+                };
+            }
+
+            // Set EURange if specified
+            if (mapping.EngineeringUnits != null)
+            {
+                nodeState.EURange = new PropertyState<Range>(nodeState)
+                {
+                    Value = new Range(mapping.EngineeringUnits.High, mapping.EngineeringUnits.Low)
+                };
+            }
 
             _nodes.TryAdd(mapping.DwsimTag, nodeState);
         }
@@ -197,6 +246,21 @@ public class OpcUaServer : IOpcUaServer
         {
             _logger.LogError(ex, "Error creating tag node {TagPath}", mapping.DwsimTag);
         }
+    }
+
+    private object GetDefaultValue(string dataType)
+    {
+        return dataType.ToLower() switch
+        {
+            "double" => 0.0,
+            "float" => 0.0f,
+            "int32" => 0,
+            "int64" => 0L,
+            "boolean" => false,
+            "string" => string.Empty,
+            "datetime" => DateTime.UtcNow,
+            _ => 0.0
+        };
     }
 
     private NodeId GetOpcDataType(string dataType)
