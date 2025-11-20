@@ -10,11 +10,16 @@ namespace DWSIM.OTS.SimulationHost.Controllers;
 public class SessionsController : ControllerBase
 {
     private readonly ISessionManager _sessionManager;
+    private readonly IScenarioExecutor _scenarioExecutor;
     private readonly ILogger<SessionsController> _logger;
 
-    public SessionsController(ISessionManager sessionManager, ILogger<SessionsController> logger)
+    public SessionsController(
+        ISessionManager sessionManager,
+        IScenarioExecutor scenarioExecutor,
+        ILogger<SessionsController> logger)
     {
         _sessionManager = sessionManager;
+        _scenarioExecutor = scenarioExecutor;
         _logger = logger;
     }
 
@@ -279,5 +284,88 @@ public class SessionsController : ControllerBase
         {
             return NotFound(new { error = $"Session not found: {sessionId}" });
         }
+    }
+
+    /// <summary>
+    /// Run a scenario on this session
+    /// </summary>
+    [HttpPost("{sessionId}/scenario/run")]
+    [ProducesResponseType(typeof(RunScenarioResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<RunScenarioResponse>> RunScenario(
+        string sessionId,
+        [FromBody] RunScenarioRequest request)
+    {
+        try
+        {
+            var response = await _scenarioExecutor.RunScenarioAsync(
+                sessionId,
+                request.ScenarioPath,
+                request.TimeFactor ?? 1.0);
+
+            return Ok(response);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (FileNotFoundException ex)
+        {
+            return BadRequest(new { error = $"Scenario file not found: {ex.Message}" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error running scenario on session {SessionId}", sessionId);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Stop a running scenario
+    /// </summary>
+    [HttpPost("scenarios/{runId}/stop")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> StopScenario(string runId)
+    {
+        try
+        {
+            await _scenarioExecutor.StopScenarioAsync(runId);
+            return Ok(new { message = $"Scenario run {runId} stopped" });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = $"Scenario run not found: {runId}" });
+        }
+    }
+
+    /// <summary>
+    /// Get status of a scenario run
+    /// </summary>
+    [HttpGet("scenarios/{runId}/status")]
+    [ProducesResponseType(typeof(ScenarioStatusResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ScenarioStatusResponse>> GetScenarioStatus(string runId)
+    {
+        var status = await _scenarioExecutor.GetStatusAsync(runId);
+
+        if (status == null)
+        {
+            return NotFound(new { error = $"Scenario run not found: {runId}" });
+        }
+
+        return Ok(status);
+    }
+
+    /// <summary>
+    /// List all scenario runs
+    /// </summary>
+    [HttpGet("scenarios")]
+    [ProducesResponseType(typeof(List<ScenarioStatusResponse>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<ScenarioStatusResponse>>> ListScenarioRuns()
+    {
+        var runs = await _scenarioExecutor.ListRunsAsync();
+        return Ok(runs);
     }
 }
