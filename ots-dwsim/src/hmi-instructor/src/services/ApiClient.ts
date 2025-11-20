@@ -145,6 +145,31 @@ class ApiClient {
     const response = await this.client.post(`/api/v1/sessions/${sessionId}/restore`, { snapshotId });
     return response.data;
   }
+
+  // Assessment operations
+  async generateAssessment(sessionId: string, scenarioId?: string) {
+    const response = await this.client.post('/api/v1/assessments', {
+      sessionId,
+      scenarioId,
+    });
+    return response.data;
+  }
+
+  async getAssessment(assessmentId: string) {
+    const response = await this.client.get(`/api/v1/assessments/${assessmentId}`);
+    return response.data;
+  }
+
+  async listAssessments(sessionId?: string) {
+    const params = sessionId ? { sessionId } : {};
+    const response = await this.client.get('/api/v1/assessments', { params });
+    return response.data;
+  }
+
+  async getSessionMetrics(sessionId: string) {
+    const response = await this.client.get(`/api/v1/sessions/${sessionId}/metrics`);
+    return response.data;
+  }
 }
 
 export default new ApiClient();

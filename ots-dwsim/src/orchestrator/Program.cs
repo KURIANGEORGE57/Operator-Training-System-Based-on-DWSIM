@@ -75,6 +75,7 @@ builder.Services.AddSingleton(dbConfig);
 builder.Services.AddSingleton(poolConfig);
 builder.Services.AddSingleton<ITimescaleDbLogger, TimescaleDbLogger>();
 builder.Services.AddSingleton<ISessionPoolManager, SessionPoolManager>();
+builder.Services.AddSingleton<IAssessmentEngine, AssessmentEngine>();
 builder.Services.AddHttpClient();
 
 // Add health checks

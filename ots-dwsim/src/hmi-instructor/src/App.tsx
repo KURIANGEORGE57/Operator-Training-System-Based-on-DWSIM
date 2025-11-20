@@ -14,6 +14,7 @@ import {
 import SessionMonitor from './components/SessionMonitor';
 import ScenarioEditor from './components/ScenarioEditor';
 import EventTimeline from './components/EventTimeline';
+import AssessmentViewer from './components/AssessmentViewer';
 
 const darkTheme = createTheme({
   palette: {
@@ -60,6 +61,7 @@ function App() {
             <Tab label="Session Monitor" />
             <Tab label="Scenario Editor" />
             <Tab label="Event Timeline" />
+            <Tab label="Assessments" />
           </Tabs>
         </AppBar>
 
@@ -72,6 +74,9 @@ function App() {
           </TabPanel>
           <TabPanel value={tabValue} index={2}>
             <EventTimeline />
+          </TabPanel>
+          <TabPanel value={tabValue} index={3}>
+            <AssessmentViewer />
           </TabPanel>
         </Container>
       </Box>

@@ -78,3 +78,41 @@ export interface Alarm {
   tag?: string;
   value?: number;
 }
+
+export interface AssessmentReport {
+  assessmentId: string;
+  sessionId: string;
+  scenarioId?: string;
+  generatedAt: string;
+  operatorId: string;
+  overallScore: number;
+  kpiResults: KpiResult[];
+  metrics: Record<string, any>;
+  grade: string;
+  passed: boolean;
+  comments?: string;
+}
+
+export interface KpiResult {
+  kpiName: string;
+  description: string;
+  score: number;
+  maxScore: number;
+  weight: number;
+  passed: boolean;
+  actualValue: any;
+  targetValue?: any;
+  threshold?: any;
+  feedback?: string;
+}
+
+export interface PerformanceMetrics {
+  sessionDuration: string; // ISO 8601 duration
+  totalOperatorActions: number;
+  tagWrites: number;
+  snapshotsCreated: number;
+  snapshotsRestored: number;
+  averageResponseTime: number;
+  eventsProcessed: number;
+  eventTypeBreakdown: Record<string, number>;
+}

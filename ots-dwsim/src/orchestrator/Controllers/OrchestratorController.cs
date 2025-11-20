@@ -12,13 +12,16 @@ namespace DWSIM.OTS.Orchestrator.Controllers;
 public class OrchestratorController : ControllerBase
 {
     private readonly ISessionPoolManager _poolManager;
+    private readonly IAssessmentEngine _assessmentEngine;
     private readonly ILogger<OrchestratorController> _logger;
 
     public OrchestratorController(
         ISessionPoolManager poolManager,
+        IAssessmentEngine assessmentEngine,
         ILogger<OrchestratorController> logger)
     {
         _poolManager = poolManager;
+        _assessmentEngine = assessmentEngine;
         _logger = logger;
     }
 
@@ -285,6 +288,123 @@ public class OrchestratorController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting events for session {SessionId}", sessionId);
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    // ============================================
+    // Assessment Endpoints
+    // ============================================
+
+    /// <summary>
+    /// Generate an assessment report for a session
+    /// </summary>
+    /// <param name="request">Assessment generation request</param>
+    /// <returns>Generated assessment report</returns>
+    [HttpPost("assessments")]
+    [ProducesResponseType(typeof(AssessmentReport), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<AssessmentReport>> GenerateAssessment([FromBody] GenerateAssessmentRequest request)
+    {
+        try
+        {
+            _logger.LogInformation("Generating assessment for session {SessionId}", request.SessionId);
+
+            // Verify session exists
+            var session = await _poolManager.GetSessionAsync(request.SessionId);
+            if (session == null)
+            {
+                return NotFound(new { error = $"Session {request.SessionId} not found" });
+            }
+
+            var report = await _assessmentEngine.GenerateAssessmentAsync(
+                request.SessionId,
+                request.ScenarioId);
+
+            return CreatedAtAction(
+                nameof(GetAssessment),
+                new { assessmentId = report.AssessmentId },
+                report);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating assessment for session {SessionId}", request.SessionId);
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Get a specific assessment report
+    /// </summary>
+    /// <param name="assessmentId">Assessment ID</param>
+    [HttpGet("assessments/{assessmentId}")]
+    [ProducesResponseType(typeof(AssessmentReport), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<AssessmentReport>> GetAssessment(string assessmentId)
+    {
+        try
+        {
+            var report = await _assessmentEngine.GetAssessmentAsync(assessmentId);
+
+            if (report == null)
+            {
+                return NotFound(new { error = $"Assessment {assessmentId} not found" });
+            }
+
+            return Ok(report);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving assessment {AssessmentId}", assessmentId);
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// List all assessments, optionally filtered by session
+    /// </summary>
+    /// <param name="sessionId">Optional session ID filter</param>
+    [HttpGet("assessments")]
+    [ProducesResponseType(typeof(List<AssessmentReport>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<AssessmentReport>>> ListAssessments([FromQuery] string? sessionId = null)
+    {
+        try
+        {
+            var reports = await _assessmentEngine.ListAssessmentsAsync(sessionId);
+            return Ok(reports);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing assessments");
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Get performance metrics for a session
+    /// </summary>
+    /// <param name="sessionId">Session ID</param>
+    [HttpGet("sessions/{sessionId}/metrics")]
+    [ProducesResponseType(typeof(PerformanceMetrics), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PerformanceMetrics>> GetSessionMetrics(string sessionId)
+    {
+        try
+        {
+            // Verify session exists
+            var session = await _poolManager.GetSessionAsync(sessionId);
+            if (session == null)
+            {
+                return NotFound(new { error = $"Session {sessionId} not found" });
+            }
+
+            var metrics = await _assessmentEngine.CalculateMetricsAsync(sessionId);
+            return Ok(metrics);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error calculating metrics for session {SessionId}", sessionId);
             return BadRequest(new { error = ex.Message });
         }
     }
