@@ -120,14 +120,14 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - REACT_APP_API_URL=http://localhost:5000
-      - REACT_APP_OPCUA_URL=opc.tcp://localhost:4840
+      - REACT_APP_API_URL=http://orchestrator:5001
+      - CHOKIDAR_USEPOLLING=true
     volumes:
       - ./src/hmi-operator:/app
       - /app/node_modules
     depends_on:
-      - dwsim-host
-      - control-gateway
+      orchestrator:
+        condition: service_healthy
 
   # Instructor HMI (React app - development server)
   hmi-instructor:
@@ -138,12 +138,14 @@ services:
     ports:
       - "3001:3001"
     environment:
-      - REACT_APP_API_URL=http://localhost:5000
+      - REACT_APP_API_URL=http://orchestrator:5001
+      - CHOKIDAR_USEPOLLING=true
     volumes:
       - ./src/hmi-instructor:/app
       - /app/node_modules
     depends_on:
-      - dwsim-host
+      orchestrator:
+        condition: service_healthy
 
 volumes:
   postgres_data:
